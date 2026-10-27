@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Photo Note">
+<title>Photo Note</title>
+<style>
+  /* Layout: one column, photo on top, note bar and one big save button. Built for one hand in the field. */
+  :root {
+    --bg: #f3f4f2;
+    --fg: #1a1d1a;
+    --muted: #5f6660;
+    --card: #ffffff;
+    --line: #d5d9d4;
+    --accent: #1f5f9e;
+    --accent-fg: #ffffff;
+    --font: -apple-system, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151816; --fg: #eef0ec; --muted: #9aa39b; --card: #20241f; --line: #353b34; --accent: #4e94d6; --accent-fg: #0d1a27; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151816; --fg: #eef0ec; --muted: #9aa39b; --card: #20241f; --line: #353b34; --accent: #4e94d6; --accent-fg: #0d1a27; color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 16px;
+    box-sizing: border-box;
+  }
+  .app { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+  .hint { color: var(--muted); font-size: 14px; margin: 0; }
+  button {
+    font: inherit; font-size: 18px; font-weight: 600; border: 0; border-radius: 14px;
+    padding: 18px 20px; width: 100%; cursor: pointer; min-height: 60px;
+  }
+  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .primary { background: var(--accent); color: var(--accent-fg); }
+  .secondary { background: var(--card); color: var(--fg); border: 1px solid var(--line); }
+  button[disabled] { opacity: .5; cursor: default; }
+  .preview { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  canvas { display: block; width: 100%; height: auto; max-width: 100%; }
+  textarea {
+    font: inherit; font-size: 18px; width: 100%; box-sizing: border-box; min-height: 84px;
+    padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--fg); resize: vertical;
+  }
+  textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 0; }
+  .status { font-size: 14px; color: var(--muted); min-height: 1.2em; margin: 0; }
+  @media (prefers-reduced-motion: no-preference) { button { transition: transform .08s; } button:active { transform: scale(.98); } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <h1>Photo Note</h1>
+  <input type="file" id="shot" accept="image/*" capture="environment" hidden>
+
+  <div id="start">
+    <button class="primary" id="takeBtn" type="button">Take photo</button>
+    <p class="hint">Snap it, type the note, save. The note and the date/time go on the bottom of the picture.</p>
+  </div>
+
+  <div id="work" hidden>
+    <div class="preview"><canvas id="cv"></canvas></div>
+    <textarea id="note" placeholder="Type your note" autocomplete="off"></textarea>
+    <button class="primary" id="saveBtn" type="button">Save to photos</button>
+    <button class="secondary" id="againBtn" type="button">New photo</button>
+    <p class="status" id="status"></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var shot = document.getElementById('shot');
+  var start = document.getElementById('start');
+  var work = document.getElementById('work');
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var note = document.getElementById('note');
+  var saveBtn = document.getElementById('saveBtn');
+  var status = document.getElementById('status');
+  var img = null, stampTime = '';
+  document.getElementById('takeBtn').onclick = function () { shot.value = ''; shot.click(); };
+  document.getElementById('againBtn').onclick = function () { shot.value = ''; shot.click(); };
+
+  shot.onchange = function () {
+    var f = shot.files && shot.files[0];
+    if (!f) return;
+    var url = URL.createObjectURL(f);
+    var im = new Image();
+    im.onload = function () {
+      img = im;
+      stampTime = fmt(new Date());
+      note.value = '';
+      start.hidden = true; work.hidden = false; status.textContent = '';
+      draw();
+      note.focus();
+      URL.revokeObjectURL(url);
+    };
+    im.src = url;
+  };
+
+  note.oninput = draw;
+
+  function fmt(d) {
+    var h = d.getHours(), m = d.getMinutes(), ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear() + '  ' + h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+
+  function wrap(text, maxW) {
+    var lines = [];
+    text.split('\n').forEach(function (para) {
+      var words = para.split(/\s+/).filter(Boolean), line = '';
+      if (!words.length) { lines.push(''); return; }
+      words.forEach(function (w) {
+        var t = line ? line + ' ' + w : w;
+        if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+      });
+      lines.push(line);
+    });
+    return lines;
+  }
+
+  function draw() {
+    if (!img) return;
+    var maxEdge = 2000, s = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
+    var w = Math.round(img.naturalWidth * s), h = Math.round(img.naturalHeight * s);
+    var pad = Math.round(w * 0.03);
+    var noteSize = Math.round(w * 0.045), dateSize = Math.round(w * 0.03);
+    ctx.font = '600 ' + noteSize + 'px ' + getComputedStyle(document.body).fontFamily;
+    var lines = wrap(note.value.trim(), w - pad * 2);
+    var noteH = note.value.trim() ? lines.length * noteSize * 1.25 : 0;
+    var barH = Math.round(pad * 2 + noteH + (noteH ? pad * 0.6 : 0) + dateSize * 1.2);
+    cv.width = w; cv.height = h + barH;
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(0, h, w, barH);
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'top';
+    var y = h + pad;
+    ctx.font = '600 ' + noteSize + 'px ' + getComputedStyle(document.body).fontFamily;
+    lines.forEach(function (l) { if (noteH) { ctx.fillText(l, pad, y); y += noteSize * 1.25; } });
+    if (noteH) y += pad * 0.6;
+    ctx.fillStyle = '#c8c8c8';
+    ctx.font = '400 ' + dateSize + 'px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText(stampTime, pad, y);
+  }
+
+  saveBtn.onclick = function () {
+    if (!img) return;
+    draw();
+    saveBtn.disabled = true; status.textContent = '';
+    cv.toBlob(function (blob) {
+      var d = new Date();
+      var name = 'note-' + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' + pad2(d.getHours()) + pad2(d.getMinutes()) + '.jpg';
+      var file = new File([blob], name, { type: 'image/jpeg' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).then(function () {
+          status.textContent = 'Done.';
+        }, function () {
+          status.textContent = 'Not saved.';
+        }).then(function () { saveBtn.disabled = false; });
+      } else {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        status.textContent = 'Downloaded.';
+        saveBtn.disabled = false;
+      }
+    }, 'image/jpeg', 0.9);
+  };
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+})();
+</script>
+
+</body>
+</html>
